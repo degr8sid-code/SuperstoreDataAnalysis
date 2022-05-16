@@ -1,0 +1,303 @@
+---
+title: "Super Store Sales Data Analysis Assignment by Sidrah Abdullah"
+output: github_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This document is an EDA assignment, courtesy of IEC Data Analytics course. The dataset used in this document is EU Superstore data set. It provides a description on sales, profit and discount of each product in each order. Although the EDA could cover a lot of options, I have covered some basic analysis. Here you go!~
+
+## Exploratory Data Analysis
+
+### Importing Required Libraries
+The first step is to import all the required libraries required for the project.
+
+```{r lib, include=TRUE}
+library(readxl)
+library(naniar)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(grid)
+library(rworldmap)
+library(plotly)
+library(gridExtra)
+```
+### Read Dataset and Convert it into Dataframe
+
+Next, we will import the EU Superstore data set and convert it into dataframe.
+
+```{r dataset, include=TRUE}
+df_superStore<-read_excel('C:/Users/Sidra Abdullah/Desktop/EUSuperstore.xls')
+
+df_superStore <- data.frame(df_superStore)
+```
+
+### Look at the Data Summary
+
+After that, we will take a look at our data to check what it looks like. You can simply use the View() function in R, or analyze it using the code given below:
+
+```{r summary, include=TRUE}
+head(df_superStore)
+dim(df_superStore)
+summary(df_superStore)
+#cor(df_superStore)
+```
+### Time for Some Data Cleaning
+
+Data Cleaning is an important step! In this step, we usually look out for missing, Null and duplicated values. Let's start with these operations:
+
+```{r cleaning, include=TRUE}
+summary(is.na(df_superStore))
+gg_miss_var(df_superStore)
+miss_var_summary(df_superStore)
+```
+For duplicate values, there are multiple ways to check it. These ways are given below:
+
+```{r duplicates, include=TRUE}
+which(duplicated(df_superStore))
+sum(duplicated(df_superStore))
+df_superStore |> distinct() |> nrow()
+```
+However, these value shows repeated rows (if any). If we want to check particularly for repeated order details, then we will go for the process given below. Since each row in data represents a unique product for unique order, we will first make it a composite primary key.
+
+After that, we have counted only those unique PKs if their value is greater than 1.
+
+Lastly, we applied inner join on both to find the matched entries.
+
+```{r duplicate2, include=TRUE}
+df_superStore |>
+  mutate(key = paste(Order.ID, Product.ID)) -> df_superStore_key
+
+df_superStore_key |>
+  count(key) |>
+  filter(n>1) -> df_key_duplicates
+
+df_superStore_key |>
+  inner_join(df_key_duplicates |>
+               select(key)) -> repeatedEntries
+```
+
+But, we must keep in mind that there will always be 3-5% inaccuracy in data, and there is no point in wasting time on dealing the values case-by-case. Hence, we have ignored these inaccuracies.
+
+### Exploratory Data Analysis
+
+Now, it is time for actual EDA. The first thing we checked was to find which category is best selling and most profitable.
+
+```{r sqp, inlcude=TRUE}
+df_superStore |>                              
+  group_by(Category) |>                       
+  summarise(across(c(Sales, Quantity, Profit), list(sum = sum))) -> eda1
+```
+Then we plotted three bar charts to view their data.
+
+```{r sqpg, include=TRUE}
+  p <- ggplot(eda1, aes(x = Category, y = Sales_sum, fill = Sales_sum) ) + 
+  geom_bar(stat = "identity")
+  p
+```
+
+Next, we checked the profit margin on each sub-category, and created its stacked chart to view Sales and Profit Margin together.
+
+```{r stacked, include=TRUE}
+df_superStore |>
+  group_by(Sub.Category) |>
+  summarise(sales = sum(Sales),
+            profit = sum(Profit)) |>
+  mutate(cost = sales - profit) -> df_superStore_subCategorySales
+
+df_superStore_subCategorySales |>  
+  mutate(margin = profit / sales) -> df_superStore_subCategorySales
+
+pivot_longer(df_superStore_subCategorySales,
+             sales:profit, 
+             names_to = "key",
+             values_to = "value") -> df_superStore_subCategorySales_long
+options(scipen = 999)
+p2 <- ggplot(df_superStore_subCategorySales_long, 
+         aes(x = Sub.Category, y = value, fill = key)) +
+    geom_bar(stat = "identity", position = "fill")
+
+p2
+```
+
+From this chart, we can see that the sub-category tables has the least amount of profit.
+
+We also created a heatmap to check how our sales are doing over the days of the month.
+
+```{r heatmap, include = TRUE}
+df_superStore |>
+  mutate(month = lubridate::month(Order.Date, label=TRUE),
+         weekDay = lubridate::wday(Order.Date, label = TRUE)) |>
+  group_by(month, weekDay) |>
+  summarise(nTransactions = n_distinct(Order.ID)) -> transactions_month_day
+
+p3 <- ggplot(transactions_month_day, 
+         aes(x = month, fill = nTransactions, y = weekDay)) + 
+    geom_tile()
+p3
+```
+
+From this graph, we can see that our best sale day is Wednesday. And the month of December seems to have the most sales. In fact, the second half of the year has better sales as compared to the first half.
+
+Lastly, we checked the profit margin country-wise over the map. It was a bit tricky to create the map, so here is the complete process:
+
+1. Get the world map.
+2. Define countries in the Europe that you wish to included.
+3. Select the indexes of the states.
+4. Define coordinates using latitude and longitude.
+5. Get the value you wish to display on the chart.
+6. Store it in the data frame of European Union Table.
+7. Plot using geom polygon
+
+```{r map, include=TRUE}
+# Step 1
+worldMap <- getMap()
+
+# Step 2
+europeanUnion <- c("Austria","Belgium", "Denmark","Finland","France",
+                   "Germany","Ireland","Italy","Netherlands","Norway",
+                   "Portugal", "Spain",
+                   "Sweden","Switzerland", "United Kingdom")
+
+# Step 3
+indEU <- which(worldMap$NAME%in%europeanUnion)
+View(indEU)
+
+# Step 4
+europeCoords <- lapply(indEU, function(i){
+  df <- data.frame(worldMap@polygons[[i]]@Polygons[[1]]@coords)
+  df$region =as.character(worldMap$NAME[i])
+  colnames(df) <- list("long", "lat", "region")
+  return(df)
+})
+
+europeCoords <- do.call("rbind", europeCoords)
+
+# Step 5
+df_superStore$profitMargin <- (df_superStore$Profit / df_superStore$Sales ) * 100
+df_superStore$profitMargin <- round(df_superStore$profitMargin, 1)
+df_superStore |>
+  group_by(Country) |>
+  summarise(profit = sum(profitMargin)) -> value
+View(value)
+
+#Step 6
+europeanUnionTable <- data.frame(country = europeanUnion, value = value$profit)
+europeCoords$value <- europeanUnionTable$value[match(europeCoords$region,europeanUnionTable$country)]
+
+# Step 7
+P <- ggplot() + geom_polygon(data = europeCoords, 
+                        aes(x = long, y = lat, group = region, fill = value),
+                        colour = "black", size = 0.1) +
+  coord_map(xlim = c(-13, 35),  ylim = c(32, 71))
+
+P <- P + scale_fill_gradient(name = "Profit Margin", low = "#FF0000FF", high = "#FFFF00FF", na.value = "grey50")
+
+P
+```
+
+### RFM Analysis on the Superstore Dataset
+
+For RFM Analysis, we need to calculate total sales (quantity * unit price), 
+convert invoice data into date format and total number of transactions 
+per customer. Let's get started.
+
+```{r rfm1, include=TRUE}
+df_superStore$total <- df_superStore$Quantity * df_superStore$Sales
+df_superStore$invoiceDate <- as.Date(df_superStore$Order.Date, "%Y-%m-%d")
+head(df_superStore)
+summary(df_superStore)
+```
+
+We now calculate the following values:
+
+Recency : difference between the analysis date and the most recent date, that the customer has shopped in the store. The analysis date here has been taken as the maximum date available for the variable InvoiceDate.
+
+Frequency : Number of transactions performed by every customer.
+
+Monetary: Total money spent by every customer in the store.
+
+```{r rfm2, include=TRUE}
+analysis_date <- max(df_superStore$invoiceDate)
+rfm_df <- df_superStore |> 
+  group_by(Customer.ID) |> 
+  summarise(Recency = as.numeric(analysis_date- max(invoiceDate)), 
+            Frequency = n(), 
+            Monetary = sum(total))
+nrow(rfm_df)
+```
+
+We can now plot the density plots to understand the distribution of the three quantities calculated here.
+
+```{r rfm3, include=TRUE}
+r <- ggplot(rfm_df) +geom_density(aes(x= Recency))
+f <- ggplot(rfm_df) +geom_density(aes(x = Frequency))
+m <- ggplot(rfm_df) +geom_density(aes(x = Monetary))
+grid.arrange(r, f, m, nrow = 3)
+```
+
+### Calculate the RFM Score
+
+We can see that all the quantities calculated here — Recency, frequency and monetary has different ranges. We first convert these quantities to scores based on their quartiles. For this, we start with looking at the summary of these values.
+
+```{r rfm4, include=TRUE}
+summary(rfm_df)
+```
+
+```{r rfm5, include=TRUE}
+rfm_df$R_score <- 0
+rfm_df$R_score[rfm_df$Recency >= 1412] <- 1
+rfm_df$R_score[rfm_df$Recency >= 188 & rfm_df$Recency <1412] <- 2
+rfm_df$R_score[rfm_df$Recency >= 145 & rfm_df$Recency <188] <- 3
+rfm_df$R_score[rfm_df$Recency >= 91 & rfm_df$Recency <145] <- 4
+rfm_df$R_score[rfm_df$Recency < 30] <- 5
+rfm_df$F_score<- 0
+rfm_df$F_score[rfm_df$Frequency >=37] <- 5
+rfm_df$F_score[rfm_df$Frequency <37 & rfm_df$Frequency >= 16] <- 4
+rfm_df$F_score[rfm_df$Frequency <16 & rfm_df$Frequency >= 12] <- 3
+rfm_df$F_score[rfm_df$Frequency <12 & rfm_df$Frequency >= 8] <- 2
+rfm_df$F_score[rfm_df$Frequency <8] <- 1
+rfm_df$M_score <- 0
+rfm_df$M_score[rfm_df$Monetary >= 113108.8 ] <- 5
+rfm_df$M_score[rfm_df$Monetary < 113108.8  & rfm_df$Monetary >= 25382.7 ] <- 4
+rfm_df$M_score[rfm_df$Monetary >= 25382.7 & rfm_df$Monetary < 18608.2 ] <- 3
+rfm_df$M_score[rfm_df$Monetary >= 18608.2 & rfm_df$Monetary < 14093.0 ] <- 2
+rfm_df$M_score[rfm_df$Monetary <7376.1] <- 1
+```
+
+The variables R_score, F_score and M_score all have values between 1–4 now. We now want to combine the 3 score values into a single score — RFM score. This is done as follows :-
+
+```{r rfm6, include=TRUE}
+rfm_df <- rfm_df %>% mutate(RFM_score = 100 *R_score +10 * F_score + M_score)
+View(rfm_df)
+```
+
+Now all the customers will have an RFM score between 10 and 544 Now we can divide the customers into different segments based on this score. For this problem we have decided to divide the customers into 6 segments. You might decide to have more or less number of segments depending upon your requirements.
+
+```{r rfm7, include=TRUE}
+rfm_df$Segment <- "0"
+rfm_df$Segment[which(rfm_df$RFM_score %in% c(514, 521, 524, 534, 541, 544  ))] <-"Loyalists"
+rfm_df$Segment[which(rfm_df$RFM_score %in% c(324, 330, 334, 340, 341, 344, 510, 511, 520, 530, 540))] <- "Potential Loyalists"
+rfm_df$Segment[which(rfm_df$RFM_score %in% c(234, 240, 244, 310, 311, 320, 321, 324, 330, 334))] <- "Promising"
+rfm_df$Segment[which(rfm_df$RFM_score %in% c(221 ,224,234, 240, 244 ))] <- "Hesitant"
+rfm_df$Segment[which(rfm_df$RFM_score %in% c(210, 211, 214, 220, 221, 224, 230))] <- "Need attention"
+rfm_df$Segment[which(rfm_df$RFM_score %in% c(10, 11, 14, 20, 21, 24, 30, 31, 34, 40, 44, 111))] <-"Detractors"
+```
+
+Now let’s see how may customers fall into each segment.
+
+```{r rfm8, include=TRUE}
+table(rfm_df$Segment)
+ggplot(rfm_df) + geom_bar(aes(x = Segment, fill = Segment))+theme(axis.text.x=element_text(angle=90,hjust=1)) +labs(title = "Barplot for Segments of customers")
+```
+This concludes the RFM analysis for customer segmentation. Now we can move on to our next step, which is to calculate CLV.
+
+Thank you for reading till the end!~
+
+
